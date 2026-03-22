@@ -286,11 +286,10 @@ async function traiterEmail(email) {
       historique_sms: premierSms
     });
     
-    // Etape 7 : Si APPELER direct (rare au J+0 mais possible)
-    if (smsData.decision === 'APPELER') {
-      await mettreAJourAirtable(fiche.getId(), { statut: 'A APPELER' });
-      await envoyerEmailAlerte(leadData.prenom, leadData.telephone, smsData.note);
-    }
+    // Etape 7 : Au J+0 on force toujours EN COURS
+    // APPELER ne peut arriver qu'apres une vraie reponse du prospect (Scenario 2)
+    // On ne passe jamais en A APPELER au premier contact
+    console.log('  ℹ️  Statut force EN COURS au J+0 (APPELER uniquement apres reponse prospect)');
     
     console.log(`  ✅ Lead traite avec succes !`);
     
