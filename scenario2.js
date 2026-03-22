@@ -11,8 +11,26 @@ const Airtable = require('airtable');
 const twilio = require('twilio');
 const nodemailer = require('nodemailer');
 
-// Charger la config
-const config = JSON.parse(fs.readFileSync('config.json', 'utf8'));
+// Charger la config depuis les variables d'environnement (Railway) ou config.json (local)
+let config;
+try {
+  config = JSON.parse(fs.readFileSync('config.json', 'utf8'));
+} catch(e) {
+  config = {
+    twilio_account_sid: process.env.TWILIO_ACCOUNT_SID,
+    twilio_auth_token: process.env.TWILIO_AUTH_TOKEN,
+    twilio_from_number: process.env.TWILIO_FROM_NUMBER,
+    claude_api_key: process.env.CLAUDE_API_KEY,
+    airtable_token: process.env.AIRTABLE_TOKEN,
+    airtable_base_id: process.env.AIRTABLE_BASE_ID,
+    airtable_table: process.env.AIRTABLE_TABLE || 'LEADS',
+    gmail_user: process.env.GMAIL_USER,
+    gmail_app_password: process.env.GMAIL_APP_PASSWORD,
+    alert_email: process.env.ALERT_EMAIL,
+    nom_cabinet: process.env.NOM_CABINET || 'Cabinet Moreau',
+    telephone_conseiller: process.env.TELEPHONE_CONSEILLER
+  };
+}
 
 // Initialiser les clients
 const claude = new Anthropic({ apiKey: config.claude_api_key });
