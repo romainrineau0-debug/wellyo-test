@@ -268,15 +268,19 @@ async function traiterSMSEntrant(from, body) {
           ? messageCloture(lead.get('prenom'), null, true)
           : (decision.sms || messageCloture(lead.get('prenom'), creneau, false));
 
-        // Sauvegarder dans historique + mettre a jour statut en une seule operation
+        // Tout sauvegarder dans UN SEUL appel Airtable — urgence et creneau inclus
         historique = ajouterHistorique(historique, 'Wellyo', smsFinal);
-        await mettreAJourAirtable(lead.getId(), {
+        const champsAirtable = {
           statut: 'A APPELER',
           note_ia: decision.note || '',
-          historique_sms: historique
-        });
-        try { await mettreAJourAirtable(lead.getId(), { creneau_detecte: creneau || '' }); } catch(e) {}
-        try { await mettreAJourAirtable(lead.getId(), { urgence: estUrgent }); } catch(e) { console.log('  urgence:', e.message); }
+          historique_sms: historique,
+          creneau_detecte: creneau || ''
+        };
+        // urgence ajoutee seulement si true (Airtable Checkbox)
+        if (estUrgent) champsAirtable['urgence'] = true;
+        
+        await mettreAJourAirtable(lead.getId(), champsAirtable);
+        console.log(`  Airtable mis a jour — statut: A APPELER, urgence: ${estUrgent}, creneau: ${creneau || 'aucun'}`);
 
         await envoyerSMS(from, smsFinal);
         await envoyerEmailAlerte(lead.get('prenom'), from, decision.note || '', estUrgent, creneau);
