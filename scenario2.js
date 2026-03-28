@@ -228,7 +228,7 @@ async function traiterSMSEntrant(from, body) {
 
 // ── SERVEUR WEBHOOK ───────────────────────────────────────────────────────────
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080;
 
 const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/webhook') {
@@ -248,8 +248,13 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log('Wellyo Test Solo - Scenario 2 demarre');
   console.log(`Serveur webhook actif sur le port ${PORT}`);
   console.log('En attente de SMS entrants...');
+});
+
+// Empecher le process de s arreter
+process.on('uncaughtException', (err) => {
+  console.log('Erreur non geree:', err.message);
 });
