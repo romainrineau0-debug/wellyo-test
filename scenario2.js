@@ -230,17 +230,28 @@ async function traiterSMSEntrant(from, body) {
 
 const PORT = process.env.PORT || 8080;
 
-const server = http.createServer(async (req, res) => {
+const server = http.createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/webhook') {
     let body = '';
     req.on('data', chunk => { body += chunk.toString(); });
-    req.on('end', async () => {
-      const params = new URLSearchParams(body);
-      const from = params.get('From');
-      const message = params.get('Body');
-      if (from && message) await traiterSMSEntrant(from, message);
+    req.on('end', () => {
+      // Repondre immediatement a Twilio pour eviter le timeout
       res.writeHead(200, { 'Content-Type': 'text/xml' });
       res.end('<Response></Response>');
+      // Traiter le SMS en arriere-plan
+      try {
+        const params = new URLSearchParams(body);
+        const from = params.get('From');
+        const message = params.get('Body');
+        console.log('Webhook recu - From:', from, 'Body:', message ? message.slice(0,30) : 'vide');
+        if (from && message) {
+          traiterSMSEntrant(from, message).catch(err => {
+            console.log('Erreur traitement SMS:', err.message);
+          });
+        }
+      } catch(err) {
+        console.log('Erreur parsing webhook:', err.message);
+      }
     });
   } else {
     res.writeHead(200);
