@@ -137,7 +137,10 @@ async function envoyerEmailAlerte(prenom, telephone, noteIa, urgent, creneau) {
   const rdvInfo = creneau ? `\n\nRDV confirme : ${creneau}` : (urgent ? '\n\nRAPPELER DES QUE POSSIBLE' : '');
   const transporter = nodemailer.createTransport({
     service: 'gmail',
-    auth: { user: config.gmail_user, pass: config.gmail_app_password }
+    auth: { user: config.gmail_user, pass: config.gmail_app_password },
+    connectionTimeout: 5000,
+    greetingTimeout: 5000,
+    socketTimeout: 5000
   });
   await transporter.sendMail({
     from: config.gmail_user,
@@ -186,22 +189,34 @@ async function traiterSMSEntrant(from, body) {
         note_ia: decision.note || '',
         historique_sms: historique
       });
-      // Mise à jour champs optionnels
+      // Mise à jour champs optionnels separement
       try {
         await mettreAJourAirtable(lead.getId(), {
-          urgence: estUrgent,
-          creneau_detecte: creneau || ''
+          'creneau_detecte': creneau || ''
         });
       } catch(e) {
-        console.log('  Champs urgence/creneau non mis a jour:', e.message);
+        console.log('  creneau non mis a jour:', e.message);
+      }
+      try {
+        await mettreAJourAirtable(lead.getId(), {
+          'urgence': estUrgent
+        });
+        console.log('  urgence mis a jour:', estUrgent);
+      } catch(e) {
+        console.log('  urgence non mis a jour:', e.message);
       }
 
       if (decision.sms) await envoyerSMS(from, decision.sms);
 
-      await envoyerEmailAlerte(
-        lead.get('prenom'), from,
-        decision.note || '', estUrgent, creneau
-      );
+      // Email alerte optionnel
+      try {
+        await envoyerEmailAlerte(
+          lead.get('prenom'), from,
+          decision.note || '', estUrgent, creneau
+        );
+      } catch(e) {
+        console.log('  Email alerte non envoye:', e.message);
+      }
       console.log(`  Lead passe en A APPELER${estUrgent ? ' URGENT' : ''}${creneau ? ' - RDV: ' + creneau : ''}`);
 
     } else if (decision.decision === 'REPONDRE') {
