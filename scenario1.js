@@ -133,7 +133,12 @@ async function parserEmail(corpsEmail) {
     messages: [{ role: 'user', content: corpsEmail }]
   });
   const texte = response.content[0].text.trim();
-  return JSON.parse(texte);
+  // Nettoyer les balises markdown si Claude les a ajoutées
+  const clean = texte.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  const start = clean.indexOf('{');
+  const end = clean.lastIndexOf('}');
+  if (start === -1 || end === -1) throw new Error('JSON introuvable: ' + clean.slice(0, 80));
+  return JSON.parse(clean.slice(start, end + 1));
 }
 
 async function genererSMS(prenom, nom, produit, source) {
@@ -152,7 +157,12 @@ async function genererSMS(prenom, nom, produit, source) {
     messages: [{ role: 'user', content: contexte }]
   });
   const texte = response.content[0].text.trim();
-  return JSON.parse(texte);
+  // Nettoyer les balises markdown si Claude les a ajoutées
+  const clean = texte.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  const start = clean.indexOf('{');
+  const end = clean.lastIndexOf('}');
+  if (start === -1 || end === -1) throw new Error('JSON introuvable: ' + clean.slice(0, 80));
+  return JSON.parse(clean.slice(start, end + 1));
 }
 
 async function creerFicheAirtable(data) {
