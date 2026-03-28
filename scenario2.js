@@ -180,13 +180,21 @@ async function traiterSMSEntrant(from, body) {
       const creneau = decision.creneau || null;
 
       historique = ajouterHistorique(historique, 'Wellyo', decision.sms || '');
+      // Mise à jour principale
       await mettreAJourAirtable(lead.getId(), {
         statut: 'A APPELER',
         note_ia: decision.note || '',
-        historique_sms: historique,
-        urgence: estUrgent,
-        creneau_detecte: creneau || ''
+        historique_sms: historique
       });
+      // Mise à jour champs optionnels
+      try {
+        await mettreAJourAirtable(lead.getId(), {
+          urgence: estUrgent,
+          creneau_detecte: creneau || ''
+        });
+      } catch(e) {
+        console.log('  Champs urgence/creneau non mis a jour:', e.message);
+      }
 
       if (decision.sms) await envoyerSMS(from, decision.sms);
 
