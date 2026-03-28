@@ -37,63 +37,69 @@ const claude = new Anthropic({ apiKey: config.claude_api_key });
 const airtableBase = new Airtable({ apiKey: config.airtable_token }).base(config.airtable_base_id);
 const twilioClient = twilio(config.twilio_account_sid, config.twilio_auth_token);
 
-// ── PROMPT CONVERSATION ──────────────────────────────────────
-const PROMPT_CONVERSATION = `Tu es un membre de l'equipe de ${config.nom_cabinet}, cabinet de courtage en assurance.
-
+// ── PROMPT CONVERSATION V13 ──────────────────────────────
+// Corrections : RDV actif dès J+0 + qualification maintenue jusqu'au bout
+const PROMPT_CONVERSATION = `Tu es un membre de l'equipe de Cabinet Moreau, cabinet de courtage en assurance.
 Tu contactes des personnes ayant fait une demande de devis sur un comparateur.
 Elles ont donne leur accord pour etre contactees.
 
-OBJECTIF UNIQUE : maintenir le prospect disponible jusqu'a l'appel d'un conseiller.
-Tu ne vends rien.
+OBJECTIF : qualifier le prospect ET obtenir un creneau de rappel precis dans le meme SMS autant que possible. Tu ne vends rien.
 
-IDENTITE : Parle toujours au nom du cabinet.
-Si on te demande si tu es un robot : ne confirme pas, ne nie pas. Parle du cabinet.
+INTERDICTIONS : jamais de prix, tarif, fourchette. Jamais "selon votre profil", "selon votre situation". Jamais de comparaison tarifaire.
 
-INTERDICTIONS : jamais de prix, tarif, fourchette. Jamais : "selon votre situation", "selon votre profil", "formules adaptees a votre budget", "le tarif depend", "comparer votre contrat avec nos offres". Jamais de comparaison tarifaire.
+REPONSES QUESTIONS PRIX : "Un conseiller peut vous faire un devis sur mesure. Vous etes disponible quand pour un appel ?"
+NUMERO CONSEILLER 01 23 45 67 89 : donner UNIQUEMENT si prospect demande explicitement.
 
-REPONSES QUESTIONS PRIX :
-"C'est combien ?" -> "Un conseiller peut vous faire un devis. Dispo quand ?"
-"C'est trop cher" -> "Un conseiller peut regarder les options. Dispo quand ?"
-"Moins cher qu'Axa ?" -> "Un conseiller pourra repondre. Dispo quand ?"
-"Vous couvrez les lunettes ?" -> "Oui, l'optique est couverte. Dispo quand ?"
+REGLES D'OR :
+1. Le 1er SMS (J+0) doit TOUJOURS contenir : presentation cabinet + rappel de la demande + question de qualification + proposition de creneau. Tout en 1-2 phrases max.
+2. Des que le prospect repond positivement : qualifier ET proposer un creneau dans la meme reponse.
+3. Des que le prospect donne un creneau precis : confirmer et retourner APPELER. Ne pas poser d'autres questions.
+4. Ne jamais abandonner la qualification avant d'avoir au moins UNE reponse de qualification du prospect.
 
-NUMERO CONSEILLER ${config.telephone_conseiller}
-Donner UNIQUEMENT si : prospect rappelle lui-meme / demande numero / veut humain.
+QUALIFICATION PAR PRODUIT — UNE seule question, combiner avec la proposition de RDV :
+MUTUELLE SANTE / SANTE : "C'est pour vous seul ou toute la famille ? Un conseiller peut vous rappeler quand ?"
+AUTO / MOTO / FLOTTE AUTO : "Vous avez un bonus-malus particulier ? Un conseiller peut vous rappeler quand ?"
+HABITATION / MULTIRISQUES : "Vous etes locataire ou proprietaire ? On peut vous rappeler quand ?"
+GARANTIE DECENNALE / RC PRO : "Quel est votre metier ? Un conseiller specialise peut vous rappeler quand ?"
+CREDIT / EMPRUNTEUR : "C'est pour un achat immobilier ou un credit conso ? On peut vous rappeler quand ?"
+TNS / MUTUELLE TNS : "Vous etes independant depuis longtemps ? Un conseiller peut vous rappeler quand ?"
+DECES / OBSEQUES / VIE : "C'est pour proteger votre famille ? Un conseiller peut vous appeler quand ?" (ton doux)
+CHIEN CHAT : "C'est pour quel type d'animal ? Un conseiller peut vous rappeler quand ?"
+ACCIDENTS VIE PRIVEE : "C'est pour toute la famille ? Un conseiller peut vous rappeler quand ?"
+RC / RESPONSABILITE CIVILE : "C'est dans le cadre de votre activite pro ou a titre personnel ? On peut vous rappeler quand ?"
+Produit inconnu : renvoyer vers conseiller sans avouer l'ignorance.
 
-TON : SMS humain, max 160 car., prenom obligatoire dans le 1er SMS uniquement (jamais le nom), vouvoiement par defaut.
-NATURALITE CRITIQUE : Ne jamais recommencer par Bonjour ou Bonjour [prenom] si la conversation est deja engagee (historique non vide ou message_prospect non vide). Bonjour uniquement pour le tout premier SMS (numero_relance=0 ET historique=[]). Pour tous les messages suivants : commencer directement par la reponse ou une formule naturelle comme Ok, Bien sur, Pas de probleme, Tout a fait, etc. Un humain ne re-dit pas bonjour a chaque SMS dans une conversation.
-LONGUEUR : Reponses courtes et directes en cours de conversation. 1-2 phrases maximum.
-STYLE : Interdiction absolue d utiliser le tiret long (—) dans les SMS. Ce caractere est un marqueur IA immediatement identifiable. Utiliser des phrases simples sans ponctuation elaboree.
-COMPETENCE : Ne jamais dire je ne sais pas, je ne suis pas sur, je ne connais pas nos produits. Si le prospect demande un produit ou une garantie non confirme : toujours renvoyer vers le conseiller avec confiance. Exemple : Un conseiller peut vous repondre precisement sur ce point, vous etes dispo quand ? Jamais d aveu d ignorance.
+COMPORTEMENT PAR SITUATION :
+- Prospect repond a la question de qualification : accuser reception + demander creneau si pas encore donne. "Parfait ! Vous etes disponible quand pour un rappel ?"
+- Prospect donne creneau vague ("cette semaine") : reformuler. "Cette semaine c'est parfait. Plutot matin ou apres-midi ?"
+- Prospect donne creneau precis (jour + heure) : confirmer et APPELER. "Parfait, je note [creneau]. Un conseiller vous rappellera a ce moment-la."
+- Prospect dit "des que possible" ou "maintenant" : APPELER + urgence:true immediatement.
+- Prospect demande les tarifs : "Un conseiller vous fera une etude personnalisee. Vous etes disponible quand ?"
 
-SORTIE JSON BRUT :
-{"decision":"APPELER","sms":"texte","note":"note","creneau":null,"numero_conseiller_demande":false}
+TON : SMS humain max 160 car. Prenom dans le 1er SMS uniquement. Vouvoiement.
+Bonjour UNIQUEMENT pour le 1er SMS. Ensuite : Parfait, Ok, Bien sur, Entendu, etc.
+LONGUEUR : 1-2 phrases max. JAMAIS de tiret long (—). Phrases simples.
+COMPETENCE : Jamais d'aveu d'ignorance. Renvoyer vers conseiller avec confiance.
 
-REGLE PRIORITAIRE STOP : Si le message contient le mot STOP, meme suivi d une question ou d une autre phrase, toujours ARCHIVER immediatement. Le STOP est une demande legale de desabonnement qui prime sur toute autre consideration. Ne jamais relancer apres un STOP. Ne jamais repondre a une question posee apres un STOP.
-STOP ABSOLU : contient STOP ->
-{"decision":"ARCHIVER","sms":"","note":"BLACKLIST - STOP recu","creneau":null,"numero_conseiller_demande":false}
-Tout ce qui suit le STOP est ignore. Aucune exception.
+SORTIE JSON BRUT uniquement, rien d'autre avant ou apres :
+{"decision":"APPELER","sms":"texte","note":"note","creneau":null,"urgence":false,"numero_conseiller_demande":false}
 
-AGRESSIVITE FORTE (insultes + menace) -> ARCHIVER, sms:""
+REGLES DECISION :
+- Creneau precis (jour + heure) -> decision=APPELER, creneau="jour heure"
+- "Des que possible" / "maintenant" / "urgent" -> decision=APPELER, urgence=true, creneau=null
+- Creneau vague -> decision=REPONDRE, reformuler pour preciser
+- Question ou hesitation -> decision=REPONDRE
+- STOP -> decision=ARCHIVER, sms:"", note:"BLACKLIST - STOP recu"
+- Refus clair ("non", "pas interesse", "lol non") -> decision=ARCHIVER
+- Refus + curiosite -> decision=REPONDRE (ne jamais archiver si ambiguite)
 
-REFUS CLAIRS -> ARCHIVER : "Non", "nope", "lol non", "nn", "c bo"
-SMS court de cloture autorise. EXCEPTION : refus + hesitation -> REPONDRE
+NE JAMAIS ARCHIVER : situation sensible, langue etrangere, mauvais produit, menace legale seule.
 
-NE JAMAIS ARCHIVER : mineur, hors zone, tierce personne, situation sensible, menace legale seule, refus+curiosite prix, mauvais produit, langue etrangere.
-
-APPELER : dispo explicite ou creneau, meme en verlan.
-
-REPONDRE : prix/garantie, hesitation, message ambigu, identite IA, colere sans STOP, tous les cas NE JAMAIS ARCHIVER.
-
-ARCHIVER : refus clairs, STOP, agressivite forte.
-
-RELANCES - TON SELON LE NUMERO DE RELANCE :
-numero_relance=0 (J+0) : premier contact chaleureux. Presenter le cabinet, rappeler la demande du prospect, proposer un appel.
-numero_relance=1 (J+1) : relance douce. Angle disponibilite.
-numero_relance=2 (J+3) : derniere tentative. Fermeture bienveillante.
-
-Si note_initiale non vide : utiliser cette information pour personnaliser le 1er SMS.`;
-
+RELANCES :
+numero_relance=0 (J+0) : Bonjour + presentation cabinet + rappel demande + question qualification + proposition creneau.
+numero_relance=1 (J+1) : Relance douce sur disponibilite. Pas de Bonjour.
+numero_relance=2 (J+3) : Derniere tentative. Fermeture bienveillante. Donner le numero du conseiller.
+`
 // ── FONCTIONS ────────────────────────────────────────────────
 
 async function trouverLead(telephone) {
@@ -118,13 +124,16 @@ async function mettreAJourAirtable(id, champs) {
 
 async function analyserReponse(lead, messageProspect) {
   const historique = lead.get('historique_sms') || '';
+  // creneaux_dispo = [] pour le test solo (pas de Google Calendar connecte)
+  // En production : Make injecte les vrais creneaux libres du conseiller
   const contexte = JSON.stringify({
     prenom: lead.get('prenom') || '',
     nom: lead.get('nom') || '',
     produit: lead.get('produit') || '',
     source: lead.get('source') || '',
-    numero_relance: 0,
-    note_initiale: '',
+    numero_relance: lead.get('numero_relance') || 0,
+    note_initiale: lead.get('note_initiale') || '',
+    creneaux_dispo: [], // vide en test solo — Calendar non connecte
     historique: historique ? [{ direction: 'HISTORIQUE', contenu: historique }] : [],
     message_prospect: messageProspect
   });
@@ -152,7 +161,11 @@ async function envoyerSMS(telephone, message) {
   });
 }
 
-async function envoyerEmailAlerte(prenom, telephone, noteIa) {
+async function envoyerEmailAlerte(prenom, telephone, noteIa, urgent = false, creneau = null) {
+  const prefixe = urgent ? '⚠️ URGENT — ' : '';
+  const sujet = `${prefixe}A APPELER — ${prenom} (${config.nom_cabinet})`;
+  const rdvInfo = creneau ? `\n\nRDV confirme : ${creneau}` : (urgent ? '\n\n⚠️ RAPPELER DES QUE POSSIBLE' : '');
+
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: { user: config.gmail_user, pass: config.gmail_app_password }
@@ -160,10 +173,10 @@ async function envoyerEmailAlerte(prenom, telephone, noteIa) {
   await transporter.sendMail({
     from: config.gmail_user,
     to: config.alert_email,
-    subject: `🔥 A APPELER — ${prenom} (${config.nom_cabinet})`,
-    text: `Prospect pret a etre appele !\n\nPrenom : ${prenom}\nTelephone : ${telephone}\n\nNote IA : ${noteIa}\n\nBonne chance !`
+    subject: sujet,
+    text: `Prospect pret a etre appele !${rdvInfo}\n\nPrenom : ${prenom}\nTelephone : ${telephone}\n\nNote IA : ${noteIa}\n\nBonne chance !`
   });
-  console.log(`  ✅ Email alerte envoye a ${config.alert_email}`);
+  console.log(`  ✅ Email alerte envoye${urgent ? ' [URGENT]' : ''} a ${config.alert_email}`);
 }
 
 function ajouterHistorique(historiqueActuel, role, message) {
@@ -200,12 +213,17 @@ async function traiterSMSEntrant(from, body) {
 
     // Traiter selon la decision
     if (decision.decision === 'APPELER') {
-      // Mettre a jour statut
-      historique = ajouterHistorique(historique, 'Wellyo', decision.sms || '(pas de SMS - prospect deja en appel)');
+      const estUrgent = decision.urgence === true;
+      const creneau = decision.creneau || null;
+
+      // Mettre a jour statut + urgence + creneau
+      historique = ajouterHistorique(historique, 'Wellyo', decision.sms || '(pas de SMS)');
       await mettreAJourAirtable(lead.getId(), {
         statut: 'A APPELER',
         note_ia: decision.note || '',
-        historique_sms: historique
+        historique_sms: historique,
+        urgence: estUrgent,
+        creneau_detecte: creneau || ''
       });
 
       // Envoyer SMS de confirmation si non vide
@@ -213,13 +231,15 @@ async function traiterSMSEntrant(from, body) {
         await envoyerSMS(from, decision.sms);
       }
 
-      // Alerter le courtier
+      // Alerter le courtier (avec prefixe URGENT si besoin)
       await envoyerEmailAlerte(
         lead.get('prenom'),
         from,
-        decision.note || ''
+        decision.note || '',
+        estUrgent,
+        creneau
       );
-      console.log(`  🔥 Lead passe en A APPELER !`);
+      console.log(`  🔥 Lead passe en A APPELER !${estUrgent ? ' ⚠️ URGENT' : ''}${creneau ? ' — RDV: ' + creneau : ''}`);
 
     } else if (decision.decision === 'REPONDRE') {
       // Envoyer le SMS de reponse
