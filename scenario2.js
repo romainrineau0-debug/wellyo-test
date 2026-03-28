@@ -79,7 +79,8 @@ LONGUEUR : 1-2 phrases max. JAMAIS de tiret long.
 COMPETENCE : Jamais d'aveu d'ignorance. Renvoyer vers conseiller avec confiance.
 
 SORTIE JSON BRUT uniquement, rien d'autre :
-{"decision":"APPELER","sms":"texte","note":"note","creneau":null,"urgence":false,"numero_conseiller_demande":false}`;
+{"decision":"APPELER","sms":"texte","note":"note","creneau":null,"urgence":false,"numero_conseiller_demande":false}
+IMPORTANT : le champ "creneau" doit etre en texte lisible francais (ex: "lundi 30 mars a 10h") JAMAIS en format ISO ou timestamp.`;
 
 // ── FONCTIONS ─────────────────────────────────────────────────────────────────
 
@@ -188,12 +189,27 @@ async function envoyerEmailAlerte(prenom, telephone, noteIa, urgent, creneau) {
 }
 
 // ── MESSAGE DE CLOTURE — HARDCODE, JAMAIS CLAUDE ─────────────────────────────
+function formaterCreneau(creneau) {
+  if (!creneau) return null;
+  // Si format ISO (2026-03-29T10:00:00), convertir en texte lisible
+  if (creneau.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)) {
+    const d = new Date(creneau);
+    return d.toLocaleDateString('fr-FR', {
+      weekday: 'long', day: 'numeric', month: 'long',
+      hour: '2-digit', minute: '2-digit',
+      timeZone: 'Europe/Paris'
+    }).replace(' à 00:00', '');
+  }
+  return creneau;
+}
+
 function messageCloture(prenom, creneau, urgent) {
   if (urgent) {
     return `Bien recu ${prenom} ! Un conseiller vous rappelle dans les plus brefs delais.`;
   }
-  if (creneau) {
-    return `C'est bien note ${prenom}. Notre conseiller vous rappellera le ${creneau}. A bientot !`;
+  const creneauFormate = formaterCreneau(creneau);
+  if (creneauFormate) {
+    return `C'est bien note ${prenom}. Notre conseiller vous rappellera le ${creneauFormate}. A bientot !`;
   }
   return `C'est bien note ${prenom}. Notre conseiller vous rappellera prochainement. A bientot !`;
 }
