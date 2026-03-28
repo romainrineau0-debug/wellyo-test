@@ -38,7 +38,7 @@ Elles ont donne leur accord pour etre contactees.
 
 OBJECTIF : qualifier le prospect ET obtenir un creneau de rappel precis. Tu ne vends rien.
 INTERDICTIONS : jamais de prix, tarif, fourchette.
-REPONSES PRIX : "Les tarifs dependent de votre profil exact, notre conseiller vous fera un devis personnalise. Vous etes disponible quand ?"
+REPONSES PRIX : "Les tarifs dependent de votre profil exact, notre conseiller vous fera un devis personnalise. Quand seriez-vous disponible ?"
 NUMERO CONSEILLER ${config.telephone_conseiller} : donner UNIQUEMENT si prospect demande explicitement.
 
 REGLES D OR :
@@ -48,16 +48,16 @@ REGLES D OR :
 4. Ne jamais ignorer une question du prospect.
 
 QUALIFICATION PAR PRODUIT (UNE seule question) :
-MUTUELLE SANTE / SANTE : "C est pour vous seul ou toute la famille ?"
-AUTO / MOTO / FLOTTE AUTO : "Vous avez un bonus-malus particulier ?"
-HABITATION / MULTIRISQUES : "Vous etes locataire ou proprietaire ?"
-GARANTIE DECENNALE / RC PRO : "Quel est votre metier ?"
-CREDIT / EMPRUNTEUR : "C est pour un achat immobilier ou un credit conso ?"
-TNS / MUTUELLE TNS : "Vous etes independant depuis longtemps ?"
-DECES / OBSEQUES / VIE : "C est pour proteger votre famille ?" (ton doux)
-CHIEN CHAT : "C est pour quel type d animal ?"
-ACCIDENTS VIE PRIVEE : "Vous souhaitez une couverture pour toute la famille ?"
-RC / RESPONSABILITE CIVILE : "C est dans le cadre de votre activite pro ou a titre personnel ?"
+MUTUELLE SANTE / SANTE : "C'est pour vous seul ou toute la famille ? Quand seriez-vous disponible pour un appel ?"
+AUTO / MOTO / FLOTTE AUTO : "Vous avez un bonus-malus particulier ? Quand seriez-vous disponible pour un appel ?"
+HABITATION / MULTIRISQUES : "Vous etes locataire ou proprietaire ? Quand seriez-vous disponible pour un appel ?"
+GARANTIE DECENNALE / RC PRO : "Quel est votre metier ? Quand seriez-vous disponible pour un appel ?"
+CREDIT / EMPRUNTEUR : "C'est pour un achat immobilier ou un credit conso ? Quand seriez-vous disponible pour un appel ?"
+TNS / MUTUELLE TNS : "Vous etes independant depuis longtemps ? Quand seriez-vous disponible pour un appel ?"
+DECES / OBSEQUES / VIE : "C'est pour proteger votre famille ? Quand seriez-vous disponible pour un appel ?" (ton doux)
+CHIEN CHAT : "C'est pour quel type d'animal ? Quand seriez-vous disponible pour un appel ?"
+ACCIDENTS VIE PRIVEE : "Vous souhaitez une couverture pour toute la famille ? Quand seriez-vous disponible pour un appel ?"
+RC / RESPONSABILITE CIVILE : "C'est dans le cadre de votre activite pro ou a titre personnel ? Quand seriez-vous disponible pour un appel ?"
 Produit inconnu : renvoyer vers conseiller sans avouer l ignorance.
 
 TON : SMS humain max 160 car. Prenom dans le 1er SMS uniquement. Vouvoiement.
@@ -166,6 +166,34 @@ async function traiterSMSEntrant(from, body) {
     const lead = await trouverLead(from);
     if (!lead) {
       console.log('  Aucun lead EN COURS trouve pour ce numero');
+      // Chercher si le lead est A APPELER pour envoyer un message de cloture
+      try {
+        const leadAppeler = await new Promise((resolve, reject) => {
+          airtableBase(config.airtable_table).select({
+            filterByFormula: `AND({telephone} = '${from}', {statut} = 'A APPELER')`
+          }).firstPage((err, records) => {
+            if (err) reject(err);
+            else resolve(records.length > 0 ? records[0] : null);
+          });
+        });
+        if (leadAppeler) {
+          const isStop = body.toUpperCase().includes('STOP');
+          if (isStop) {
+            await mettreAJourAirtable(leadAppeler.getId(), { statut: 'ARCHIVE', note_ia: 'BLACKLIST - STOP recu apres qualification' });
+            console.log('  STOP recu sur lead A APPELER - archive');
+          } else {
+            // Repondre que le conseiller va rappeler
+            const creneau = leadAppeler.get('creneau_detecte') || '';
+            const msg = creneau
+              ? `Votre rendez-vous est bien confirme${creneau ? ' pour ' + creneau : ''}. Notre conseiller vous appellera a ce moment-la. A bientot !`
+              : 'Notre conseiller va vous rappeler tres prochainement. A bientot !';
+            await envoyerSMS(from, msg);
+            console.log('  Message de cloture envoye au prospect');
+          }
+        }
+      } catch(e) {
+        console.log('  Erreur recherche lead A APPELER:', e.message);
+      }
       return;
     }
     console.log(`  Lead : ${lead.get('prenom')} ${lead.get('nom')}`);
