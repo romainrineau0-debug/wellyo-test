@@ -67,8 +67,14 @@ LONGUEUR : 1-2 phrases max. JAMAIS de tiret long.
 SORTIE JSON BRUT uniquement, rien d autre :
 {"decision":"APPELER","sms":"texte","note":"note","creneau":null,"urgence":false,"numero_conseiller_demande":false}
 
-Creneau precis -> APPELER. "Des que possible" -> APPELER urgence:true.
-Creneau vague -> REPONDRE reformuler. STOP -> ARCHIVER sms:"". Refus clair -> ARCHIVER.`;
+REGLES CRENEAU :
+- Creneau precis (jour + heure exacte) -> APPELER immediatement. Ex: "jeudi 14h", "mardi 15h30".
+- Jour sans heure ("mercredi apres-midi", "jeudi") -> REPONDRE demander heure exacte. Ex: "Mercredi c'est parfait, vous preferez 14h, 15h ou 16h ?"
+- Creneau vague ("cette semaine", "en fin de semaine") -> REPONDRE demander jour ET heure. Ex: "Jeudi ou vendredi ? Et vers quelle heure ?"
+- JAMAIS confirmer une plage horaire ("entre 14h et 17h") -> toujours une heure precise.
+- Toujours preciser "par telephone" ou "par appel" quand on confirme un creneau. Ex: "Parfait, je note jeudi 14h. Notre conseiller vous appellera par telephone a ce moment-la." 
+- "Des que possible" / "maintenant" -> APPELER urgence:true immediatement.
+- STOP -> ARCHIVER sms:"". Refus clair -> ARCHIVER.`;
 
 // ── FONCTIONS ─────────────────────────────────────────────────────────────────
 
@@ -182,13 +188,20 @@ async function traiterSMSEntrant(from, body) {
             await mettreAJourAirtable(leadAppeler.getId(), { statut: 'ARCHIVE', note_ia: 'BLACKLIST - STOP recu apres qualification' });
             console.log('  STOP recu sur lead A APPELER - archive');
           } else {
-            // Repondre que le conseiller va rappeler
+            // Repondre avec le vrai creneau stocke dans Airtable
             const creneau = leadAppeler.get('creneau_detecte') || '';
+            const prenom = leadAppeler.get('prenom') || '';
             const msg = creneau
-              ? `Votre rendez-vous est bien confirme${creneau ? ' pour ' + creneau : ''}. Notre conseiller vous appellera a ce moment-la. A bientot !`
-              : 'Notre conseiller va vous rappeler tres prochainement. A bientot !';
+              ? `Parfait ${prenom}, votre rendez-vous telephonique est confirme pour le ${creneau}. Notre conseiller vous appellera a ce moment precis. A bientot !`
+              : `Parfait ${prenom}, notre conseiller va vous rappeler tres prochainement. A bientot !`;
             await envoyerSMS(from, msg);
-            console.log('  Message de cloture envoye au prospect');
+            // Sauvegarder dans historique
+            try {
+              let hist = leadAppeler.get('historique_sms') || '';
+              hist = hist + '\n\n[Wellyo] ' + new Date().toLocaleString('fr-FR') + '\n' + msg;
+              await mettreAJourAirtable(leadAppeler.getId(), { historique_sms: hist });
+            } catch(e) {}
+            console.log('  Message de cloture envoye et sauvegarde dans historique');
           }
         }
       } catch(e) {
