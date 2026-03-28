@@ -206,7 +206,12 @@ async function traiterSMSEntrant(from, body) {
         console.log('  urgence non mis a jour:', e.message);
       }
 
-      if (decision.sms) await envoyerSMS(from, decision.sms);
+      // SMS de confirmation — fallback si Claude n'en a pas genere
+      const smsConfirmation = decision.sms || (estUrgent
+        ? 'Bien recu ! Un conseiller vous rappelle dans les plus brefs delais.'
+        : 'Parfait, un conseiller vous rappellera au creneau convenu.');
+      await envoyerSMS(from, smsConfirmation);
+      console.log('  SMS confirmation envoye');
 
       // Email alerte optionnel
       try {
