@@ -46,6 +46,8 @@ REGLES D OR :
 2. Des que le prospect repond positivement : qualifier ET proposer un creneau.
 3. Des que le prospect donne un creneau precis : confirmer et retourner APPELER.
 4. Ne jamais ignorer une question du prospect.
+5. Utiliser la date_du_jour du contexte pour resoudre "demain", "ce soir", "lundi prochain". Ex: si date_du_jour est dimanche 29 mars, "demain" = lundi 30 mars. Toujours confirmer avec le vrai jour. Ex: "Parfait, je note lundi 30 mars a 10h."
+6. Pour toute question technique, reglementaire ou tarifaire : ne jamais affirmer. Renvoyer vers le conseiller. Ex: "Notre conseiller pourra vous repondre precisement, quand seriez-vous disponible ?"
 
 QUALIFICATION PAR PRODUIT (UNE seule question) :
 MUTUELLE SANTE / SANTE : "C'est pour vous seul ou toute la famille ? Quand seriez-vous disponible pour un appel ?"
@@ -62,6 +64,8 @@ Produit inconnu : renvoyer vers conseiller sans avouer l ignorance.
 
 TON : SMS humain max 160 car. Prenom dans le 1er SMS uniquement. Vouvoiement.
 Bonjour UNIQUEMENT pour le 1er SMS. Ensuite : Parfait, Ok, Bien sur, Entendu.
+INTERDICTIONS LANGUE : jamais "dispo" -> utiliser "disponible". Jamais "Vous etes disponible quand ?" -> utiliser "Quand seriez-vous disponible ?" ou "Quand etes-vous disponible ?". Phrases correctes en francais uniquement.
+INTERDICTIONS TECHNIQUES : jamais affirmer ce qu'on peut ou ne peut pas faire (ex: "Nous pouvons vous assurer", "Nous couvrons", "C'est possible"). Pour toute question technique, medicale, reglementaire ou tarifaire : renvoyer vers le conseiller. Ex: "Notre conseiller pourra vous repondre precisement sur ce point, quand seriez-vous disponible ?"
 LONGUEUR : 1-2 phrases max. JAMAIS de tiret long.
 
 SORTIE JSON BRUT uniquement, rien d autre :
@@ -72,7 +76,7 @@ REGLES CRENEAU :
 - Jour sans heure ("mercredi apres-midi", "jeudi") -> REPONDRE demander heure exacte. Ex: "Mercredi c'est parfait, vous preferez 14h, 15h ou 16h ?"
 - Creneau vague ("cette semaine", "en fin de semaine") -> REPONDRE demander jour ET heure. Ex: "Jeudi ou vendredi ? Et vers quelle heure ?"
 - JAMAIS confirmer une plage horaire ("entre 14h et 17h") -> toujours une heure precise.
-- Toujours preciser "par telephone" ou "par appel" quand on confirme un creneau. Ex: "Parfait, je note jeudi 14h. Notre conseiller vous appellera par telephone a ce moment-la." 
+- A la confirmation du creneau : "Parfait, je note [jour heure]. Notre conseiller vous rappellera a ce moment-la." Le mot "rappellera" suffit, ne JAMAIS ajouter "par telephone" ou "par appel" dans aucun message.
 - "Des que possible" / "maintenant" -> APPELER urgence:true immediatement.
 - STOP -> ARCHIVER sms:"". Refus clair -> ARCHIVER.`;
 
@@ -108,7 +112,16 @@ async function mettreAJourAirtable(id, champs) {
 
 async function analyserReponse(lead, messageProspect) {
   const historique = lead.get('historique_sms') || '';
+  // Date du jour en français pour que Claude puisse résoudre "demain", "ce soir", etc.
+  const maintenant = new Date().toLocaleDateString('fr-FR', { 
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    timeZone: 'Europe/Paris'
+  });
+  const heureFR = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' });
+
   const contexte = JSON.stringify({
+    date_du_jour: maintenant,
+    heure_actuelle: heureFR,
     prenom: lead.get('prenom') || '',
     nom: lead.get('nom') || '',
     produit: lead.get('produit') || '',
@@ -192,7 +205,7 @@ async function traiterSMSEntrant(from, body) {
             const creneau = leadAppeler.get('creneau_detecte') || '';
             const prenom = leadAppeler.get('prenom') || '';
             const msg = creneau
-              ? `Parfait ${prenom}, votre rendez-vous telephonique est confirme pour le ${creneau}. Notre conseiller vous appellera a ce moment precis. A bientot !`
+              ? `Parfait ${prenom}, votre rendez-vous est confirme pour le ${creneau}. Notre conseiller vous rappellera a ce moment precis. A bientot !`
               : `Parfait ${prenom}, notre conseiller va vous rappeler tres prochainement. A bientot !`;
             await envoyerSMS(from, msg);
             // Sauvegarder dans historique
@@ -223,34 +236,34 @@ async function traiterSMSEntrant(from, body) {
       const estUrgent = decision.urgence === true;
       const creneau = decision.creneau || null;
 
-      historique = ajouterHistorique(historique, 'Wellyo', decision.sms || '');
-      // Mise à jour principale
+      // SMS de confirmation — fallback si Claude n'en a pas genere
+      const smsConfirmation = decision.sms || (estUrgent
+        ? 'Bien recu ! Un conseiller vous rappelle dans les plus brefs delais.'
+        : 'Parfait, un conseiller vous rappellera au creneau convenu.');
+
+      // Sauvegarder le SMS de confirmation dans l'historique AVANT de mettre à jour Airtable
+      historique = ajouterHistorique(historique, 'Wellyo', smsConfirmation);
+
+      // Mise à jour principale avec historique complet
       await mettreAJourAirtable(lead.getId(), {
         statut: 'A APPELER',
         note_ia: decision.note || '',
         historique_sms: historique
       });
-      // Mise à jour champs optionnels separement
+      // Mise à jour champs optionnels
       try {
-        await mettreAJourAirtable(lead.getId(), {
-          'creneau_detecte': creneau || ''
-        });
+        await mettreAJourAirtable(lead.getId(), { 'creneau_detecte': creneau || '' });
       } catch(e) {
         console.log('  creneau non mis a jour:', e.message);
       }
       try {
-        await mettreAJourAirtable(lead.getId(), {
-          'urgence': estUrgent
-        });
+        await mettreAJourAirtable(lead.getId(), { 'urgence': estUrgent });
         console.log('  urgence mis a jour:', estUrgent);
       } catch(e) {
         console.log('  urgence non mis a jour:', e.message);
       }
 
-      // SMS de confirmation — fallback si Claude n'en a pas genere
-      const smsConfirmation = decision.sms || (estUrgent
-        ? 'Bien recu ! Un conseiller vous rappelle dans les plus brefs delais.'
-        : 'Parfait, un conseiller vous rappellera au creneau convenu.');
+      // Envoyer le SMS après avoir sauvegardé dans Airtable
       await envoyerSMS(from, smsConfirmation);
       console.log('  SMS confirmation envoye');
 
