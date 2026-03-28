@@ -263,7 +263,10 @@ async function traiterSMSEntrant(from, body) {
         const creneau = decision.creneau || null;
 
         // Generer message de confirmation
-        const smsFinal = decision.sms || messageCloture(lead.get('prenom'), creneau, estUrgent);
+        // Pour urgence:true, toujours utiliser messageCloture (jamais laisser Claude inventer un creneau)
+        const smsFinal = estUrgent 
+          ? messageCloture(lead.get('prenom'), null, true)
+          : (decision.sms || messageCloture(lead.get('prenom'), creneau, false));
 
         // Sauvegarder dans historique + mettre a jour statut en une seule operation
         historique = ajouterHistorique(historique, 'Wellyo', smsFinal);
@@ -306,6 +309,9 @@ async function traiterSMSEntrant(from, body) {
     const leadAppeler = await trouverLeadParStatut(from, 'A APPELER');
     if (leadAppeler) {
       console.log(`  Lead A APPELER : ${leadAppeler.get('prenom')}`);
+      console.log(`  Historique actuel: ${(leadAppeler.get('historique_sms') || '').length} chars`);
+      console.log(`  Urgence: ${leadAppeler.get('urgence')}`);
+      console.log(`  Creneau: ${leadAppeler.get('creneau_detecte')}`);
 
       if (isStop) {
         let hist = leadAppeler.get('historique_sms') || '';
@@ -316,18 +322,24 @@ async function traiterSMSEntrant(from, body) {
       }
 
       // Message hardcode — JAMAIS Claude ici
-      const creneau = leadAppeler.get('creneau_detecte') || '';
+      const creneau = formaterCreneau(leadAppeler.get('creneau_detecte') || '');
       const prenom = leadAppeler.get('prenom') || '';
-      const urgent = leadAppeler.get('urgence') || false;
+      // Airtable checkbox : true = coche, undefined/null = decoche
+      const urgent = leadAppeler.get('urgence') === true;
       const msg = messageCloture(prenom, creneau, urgent);
+      console.log(`  Message cloture: "${msg}" (urgent=${urgent}, creneau="${creneau}")`);
 
-      // Sauvegarder le message du prospect ET la reponse dans historique
+      // Sauvegarder prospect + wellyo dans historique
       let hist = leadAppeler.get('historique_sms') || '';
       hist = ajouterHistorique(hist, 'Prospect', body);
       hist = ajouterHistorique(hist, 'Wellyo', msg);
-      await sauvegarderHistorique(leadAppeler, hist);
-      await envoyerSMS(from, msg);
-      console.log('  Message de cloture envoye (hardcode)');
+      
+      // Sauvegarder dans Airtable ET envoyer SMS en parallele
+      await Promise.all([
+        sauvegarderHistorique(leadAppeler, hist),
+        envoyerSMS(from, msg)
+      ]);
+      console.log('  Message de cloture envoye et historique sauvegarde');
       return;
     }
 
