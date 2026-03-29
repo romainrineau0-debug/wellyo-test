@@ -222,8 +222,16 @@ async function traiterSMSEntrant(from, body) {
   const isStop = /^stop[\s\.,!?]*/i.test(body.trim());
 
   try {
-    // ── CAS 1 : lead EN COURS ──
-    const lead = await trouverLeadParStatut(from, 'EN COURS');
+    // ── PRIORITE : vérifier d'abord si A APPELER existe ──
+    // (evite qu'un vieux lead EN COURS prenne la priorite sur un lead qualifie)
+    const leadDejaQualifie = await trouverLeadParStatut(from, 'A APPELER');
+    if (leadDejaQualifie) {
+      console.log(`  Lead A APPELER detecte en priorite : ${leadDejaQualifie.get('prenom')} — redirection vers CAS 2`);
+      // Tomber directement dans le CAS 2 ci-dessous
+    }
+
+    // ── CAS 1 : lead EN COURS (seulement si pas de A APPELER) ──
+    const lead = leadDejaQualifie ? null : await trouverLeadParStatut(from, 'EN COURS');
     if (lead) {
       console.log(`  Lead EN COURS : ${lead.get('prenom')} ${lead.get('nom')}`);
 
