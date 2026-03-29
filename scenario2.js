@@ -44,7 +44,10 @@ INTERDICTIONS LANGUE : jamais "dispo" -> utiliser "disponible". Jamais "Vous ete
 INTERDICTIONS TECHNIQUES : jamais affirmer ce qu'on peut ou ne peut pas faire (ex: "Nous pouvons vous assurer", "Nous couvrons"). Pour toute question technique, medicale ou reglementaire : "Notre conseiller pourra vous repondre precisement sur ce point, quand seriez-vous disponible ?"
 
 REGLES D OR :
-1. Le 1er SMS contient : presentation cabinet + rappel demande + question qualification + proposition creneau.
+1. Le 1er SMS : naturel et fluide. Exemples de formulations :
+   - "Bonjour [Prenom], [Cabinet]. Vous avez demande un devis pour [produit] sur [source]. [question qualification] ? Quand seriez-vous disponible ?"
+   - "Bonjour [Prenom], [Cabinet]. Nous avons bien recu votre demande de [produit] via [source]. [question qualification] ? Quand seriez-vous disponible ?"
+   EVITER : "Suite à votre demande de devis pour" — trop formel et robotique.
 2. Des que le prospect repond positivement : qualifier ET proposer un creneau.
 3. Des que le prospect donne un creneau precis (jour + heure) : confirmer et retourner APPELER.
 4. Ne jamais ignorer une question du prospect.
@@ -83,6 +86,37 @@ SORTIE JSON BRUT uniquement, rien d'autre :
 IMPORTANT : le champ "creneau" doit etre en texte lisible francais (ex: "lundi 30 mars a 10h") JAMAIS en format ISO ou timestamp.`;
 
 // ── FONCTIONS ─────────────────────────────────────────────────────────────────
+
+// Mini-prompt ultra-contraint pour réponses de clôture
+const PROMPT_CLOTURE = `Tu es un assistant SMS pour un cabinet de courtage en assurance.
+Le prospect vient d'avoir son rendez-vous confirme et envoie un dernier message de politesse.
+Reponds en UNE seule phrase courte et naturelle en francais, vouvoiement.
+JAMAIS de "Notre conseiller vous rappellera" ou de date dans ce message.
+Exemples selon le contexte :
+- "Merci" -> "De rien, a tres bientot !"
+- "Ok" -> "Parfait, a bientot !"
+- "Super" -> "Avec plaisir, bonne journee !"
+- "👍" -> "A bientot !"
+- "Bonne journee" -> "Bonne journee a vous egalement !"
+Reponds UNIQUEMENT avec le texte du SMS, rien d autre.`;
+
+async function genererReponseCloture(messageProspect, prenom) {
+  try {
+    const response = await claude.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 80,
+      system: PROMPT_CLOTURE,
+      messages: [{ role: 'user', content: `Message du prospect: "${messageProspect}"
+Prenom: ${prenom}` }]
+    });
+    const msg = response.content[0].text.trim().replace(/^["']|["']$/g, '');
+    console.log(`  Reponse cloture generee: "${msg}"`);
+    return msg;
+  } catch(e) {
+    console.log('  Erreur generation cloture:', e.message);
+    return 'A bientot !';
+  }
+}
 
 function parseJSON(raw) {
   const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
@@ -191,6 +225,10 @@ async function envoyerEmailAlerte(prenom, telephone, noteIa, urgent, creneau) {
 // ── MESSAGE DE CLOTURE — HARDCODE, JAMAIS CLAUDE ─────────────────────────────
 function formaterCreneau(creneau) {
   if (!creneau) return null;
+  // Si c'est "maintenant", "immédiatement", "de suite" etc. -> null (cas urgence)
+  if (/^(maintenant|imm[eé]diatement|de suite|tout de suite|asap)$/i.test(creneau.trim())) {
+    return null;
+  }
   // Si format ISO (2026-03-29T10:00:00), convertir en texte lisible
   if (creneau.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)) {
     const d = new Date(creneau);
@@ -351,12 +389,22 @@ async function traiterSMSEntrant(from, body) {
         return;
       }
 
-      // Message hardcode — JAMAIS Claude ici
       const creneau = formaterCreneau(leadAppeler.get('creneau_detecte') || '');
       const prenom = leadAppeler.get('prenom') || '';
-      // Airtable checkbox : true = coche, undefined/null = decoche
       const urgent = leadAppeler.get('urgence') === true;
-      const msg = messageCloture(prenom, creneau, urgent);
+
+      // Detecter si c'est un premier message apres confirmation (politesse, remerciement)
+      // ou un vrai nouveau message necessitant le message de cloture complet
+      const estPremierMessagePostConfirm = /^(merci|super|parfait|ok|okay|oui|cool|top|nickel|genial|tres bien|bonne journ[eé]e|bonne soir[eé]e|bonne nuit|a bientot|au revoir|ciao|bye|d accord|entendu|[👍🙏😊✅👌🎉]{1,3})[\s!.]*$/i.test(body.trim());
+
+      let msg;
+      if (estPremierMessagePostConfirm) {
+        // Claude genere une reponse courte et naturelle adaptee au message
+        msg = await genererReponseCloture(body, prenom);
+      } else {
+        // Vrai nouveau message — message de cloture complet
+        msg = messageCloture(prenom, creneau, urgent);
+      }
       console.log(`  Message cloture: "${msg}" (urgent=${urgent}, creneau="${creneau}")`);
 
       // Sauvegarder prospect + wellyo dans historique
