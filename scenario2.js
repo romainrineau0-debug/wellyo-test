@@ -262,27 +262,45 @@ async function traiterSMSEntrant(from, body) {
         const estUrgent = decision.urgence === true;
         const creneau = decision.creneau || null;
 
-        // Generer message de confirmation
-        // Pour urgence:true, toujours utiliser messageCloture (jamais laisser Claude inventer un creneau)
+        // Generer message de confirmation hardcode
         const smsFinal = estUrgent 
           ? messageCloture(lead.get('prenom'), null, true)
           : (decision.sms || messageCloture(lead.get('prenom'), creneau, false));
 
-        // Tout sauvegarder dans UN SEUL appel Airtable — urgence et creneau inclus
+        // ETAPE 1 — Sauvegarder statut + historique (CRITIQUE — ne doit JAMAIS echouer)
         historique = ajouterHistorique(historique, 'Wellyo', smsFinal);
-        const champsAirtable = {
+        await mettreAJourAirtable(lead.getId(), {
           statut: 'A APPELER',
           note_ia: decision.note || '',
-          historique_sms: historique,
-          creneau_detecte: creneau || ''
-        };
-        // urgence ajoutee seulement si true (Airtable Checkbox)
-        if (estUrgent) champsAirtable['urgence'] = true;
-        
-        await mettreAJourAirtable(lead.getId(), champsAirtable);
-        console.log(`  Airtable mis a jour — statut: A APPELER, urgence: ${estUrgent}, creneau: ${creneau || 'aucun'}`);
+          historique_sms: historique
+        });
+        console.log(`  -> Statut A APPELER sauvegarde OK`);
 
+        // ETAPE 2 — Sauvegarder creneau (non-critique, erreur ignoree)
+        if (creneau) {
+          try {
+            await mettreAJourAirtable(lead.getId(), { creneau_detecte: creneau });
+            console.log(`  -> Creneau sauvegarde: ${creneau}`);
+          } catch(e) {
+            console.log(`  -> Creneau non sauvegarde (non-bloquant): ${e.message}`);
+          }
+        }
+
+        // ETAPE 3 — Sauvegarder urgence (non-critique, erreur ignoree)
+        if (estUrgent) {
+          try {
+            await mettreAJourAirtable(lead.getId(), { urgence: true });
+            console.log(`  -> Urgence sauvegardee: true`);
+          } catch(e) {
+            console.log(`  -> Urgence non sauvegardee (non-bloquant): ${e.message}`);
+          }
+        }
+
+        // ETAPE 4 — Envoyer SMS
         await envoyerSMS(from, smsFinal);
+        console.log(`  -> SMS envoye: "${smsFinal.slice(0, 60)}"`);
+
+        // ETAPE 5 — Email alerte (non-critique)
         await envoyerEmailAlerte(lead.get('prenom'), from, decision.note || '', estUrgent, creneau);
         console.log(`  -> A APPELER${estUrgent ? ' URGENT' : ''}${creneau ? ' | RDV: ' + creneau : ''}`);
 
