@@ -87,34 +87,40 @@ IMPORTANT : le champ "creneau" doit etre en texte lisible francais (ex: "lundi 3
 
 // ── FONCTIONS ─────────────────────────────────────────────────────────────────
 
-// Mini-prompt ultra-contraint pour réponses de clôture
+// Prompt de clôture — Claude génère une réponse naturelle pour chaque cas
 const PROMPT_CLOTURE = `Tu es un assistant SMS pour un cabinet de courtage en assurance.
-Le prospect vient d'avoir son rendez-vous confirme et envoie un dernier message de politesse.
-Reponds en UNE seule phrase courte et naturelle en francais, vouvoiement.
-JAMAIS de "Notre conseiller vous rappellera" ou de date dans ce message.
-Exemples selon le contexte :
-- "Merci" -> "De rien, a tres bientot !"
-- "Ok" -> "Parfait, a bientot !"
-- "Super" -> "Avec plaisir, bonne journee !"
-- "👍" -> "A bientot !"
-- "Bonne journee" -> "Bonne journee a vous egalement !"
-Reponds UNIQUEMENT avec le texte du SMS, rien d autre.`;
+Le rendez-vous telephonique est deja confirme. Le prospect envoie un message.
+Ta reponse doit etre naturelle, humaine, courte (1 phrase max), en francais, vouvoiement.
 
-async function genererReponseCloture(messageProspect, prenom) {
+REGLES :
+- JAMAIS de date, creneau ou "notre conseiller vous rappellera" dans ce message — c'est deja confirme
+- Si le prospect dit merci/ok/super/bonne journee : repondre avec une formule de politesse adaptee
+- Si le prospect pose une question technique : "Notre conseiller vous repondra lors de l'appel !"
+- Si le prospect semble inquiet ou hesitant : le rassurer en 1 phrase
+- Si le prospect annule ou veut changer le creneau : "Pas de probleme, notre conseiller vous contactera pour convenir d'un nouveau moment."
+- Ton chaleureux et naturel. Pas de formule robotique.
+
+Reponds UNIQUEMENT avec le texte du SMS, sans guillemets.`;
+
+async function genererReponseCloture(messageProspect, prenom, creneau, urgent) {
   try {
+    const contexte = urgent
+      ? `Le prospect est dispo immediatement, un conseiller va le rappeler tres vite.`
+      : `Le RDV est confirme${creneau ? ' pour le ' + creneau : ''}.`;
     const response = await claude.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 80,
+      max_tokens: 100,
       system: PROMPT_CLOTURE,
-      messages: [{ role: 'user', content: `Message du prospect: "${messageProspect}"
-Prenom: ${prenom}` }]
+      messages: [{ role: 'user', content: `Contexte: ${contexte}
+Prenom du prospect: ${prenom}
+Message du prospect: "${messageProspect}"` }]
     });
     const msg = response.content[0].text.trim().replace(/^["']|["']$/g, '');
-    console.log(`  Reponse cloture generee: "${msg}"`);
+    console.log(`  Reponse cloture: "${msg}"`);
     return msg;
   } catch(e) {
     console.log('  Erreur generation cloture:', e.message);
-    return 'A bientot !';
+    return urgent ? 'On vous appelle dans les plus brefs delais !' : 'A tres bientot !';
   }
 }
 
@@ -393,19 +399,9 @@ async function traiterSMSEntrant(from, body) {
       const prenom = leadAppeler.get('prenom') || '';
       const urgent = leadAppeler.get('urgence') === true;
 
-      // Detecter si c'est un premier message apres confirmation (politesse, remerciement)
-      // ou un vrai nouveau message necessitant le message de cloture complet
-      const estPremierMessagePostConfirm = /^(merci|super|parfait|ok|okay|oui|cool|top|nickel|genial|tres bien|bonne journ[eé]e|bonne soir[eé]e|bonne nuit|a bientot|au revoir|ciao|bye|d accord|entendu|[👍🙏😊✅👌🎉]{1,3})[\s!.]*$/i.test(body.trim());
-
-      let msg;
-      if (estPremierMessagePostConfirm) {
-        // Claude genere une reponse courte et naturelle adaptee au message
-        msg = await genererReponseCloture(body, prenom);
-      } else {
-        // Vrai nouveau message — message de cloture complet
-        msg = messageCloture(prenom, creneau, urgent);
-      }
-      console.log(`  Message cloture: "${msg}" (urgent=${urgent}, creneau="${creneau}")`);
+      // Claude genere toujours une reponse naturelle et adaptee au message
+      const msg = await genererReponseCloture(body, prenom, creneau, urgent);
+      console.log(`  Message cloture (urgent=${urgent}, creneau="${creneau}")`);
 
       // Sauvegarder prospect + wellyo dans historique
       let hist = leadAppeler.get('historique_sms') || '';
