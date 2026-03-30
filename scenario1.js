@@ -37,8 +37,24 @@ const claude = new Anthropic({ apiKey: config.claude_api_key });
 const airtableBase = new Airtable({ apiKey: config.airtable_token }).base(config.airtable_base_id);
 const twilioClient = twilio(config.twilio_account_sid, config.twilio_auth_token);
 
+// Transporteur nodemailer initialise une seule fois
+const transporterAlerte = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: config.gmail_user,
+    pass: config.gmail_app_password
+  },
+  connectionTimeout: 5000, greetingTimeout: 5000, socketTimeout: 5000
+});
+
 // IDs des emails déjà traités (pour éviter les doublons)
 const emailsTraites = new Set();
+
+// Nettoyage du Set toutes les 24h pour eviter fuite memoire
+setInterval(() => {
+  emailsTraites.clear();
+  console.log('emailsTraites vide (cycle 24h)');
+}, 24 * 60 * 60 * 1000);
 
 // ── PROMPT PARSING EMAIL ──────────────────────────────────────
 const PROMPT_PARSING = `Tu es un extracteur de donnees. Tu recois le corps d'un email de lead assurance envoye par un comparateur (Assurland, LeLynx, LesFurets, etc.).
@@ -201,14 +217,7 @@ async function envoyerSMS(telephone, message) {
 
 async function envoyerEmailAlerte(prenom, telephone, noteIa) {
   console.log('  → Envoi email alerte A APPELER...');
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: config.gmail_user,
-      pass: config.gmail_app_password
-    }
-  });
-  await transporter.sendMail({
+  await transporterAlerte.sendMail({
     from: config.gmail_user,
     to: config.alert_email,
     subject: `🔥 A APPELER — ${prenom} (${config.nom_cabinet})`,

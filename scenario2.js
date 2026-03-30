@@ -30,6 +30,13 @@ const claude = new Anthropic({ apiKey: config.claude_api_key });
 const airtableBase = new Airtable({ apiKey: config.airtable_token }).base(config.airtable_base_id);
 const twilioClient = twilio(config.twilio_account_sid, config.twilio_auth_token);
 
+// Transporteur nodemailer initialise une seule fois (evite les timeouts repetes)
+const transporterAlerte = nodemailer.createTransport({
+  service: 'gmail',
+  auth: { user: config.gmail_user, pass: config.gmail_app_password },
+  connectionTimeout: 5000, greetingTimeout: 5000, socketTimeout: 5000
+});
+
 // ── PROMPT V14 ────────────────────────────────────────────────────────────────
 const PROMPT = `Tu es un membre de l'equipe de ${config.nom_cabinet}, cabinet de courtage en assurance.
 Tu contactes des personnes ayant fait une demande de devis sur un comparateur.
@@ -94,7 +101,8 @@ Ta reponse doit etre naturelle, humaine, courte (1 phrase max), en francais, vou
 
 REGLES :
 - JAMAIS de date, creneau ou "notre conseiller vous rappellera" dans ce message — c'est deja confirme
-- Si le prospect dit merci/ok/super/bonne journee : repondre avec une formule de politesse adaptee
+- Si le prospect dit merci/ok/super/bonne journee : repondre "De rien !" ou "Avec plaisir !" — JAMAIS "Parfait" sur un remerciement, c'est bizarre en francais
+- Si urgent=true : ton presse et rassurant. JAMAIS "a tres bientot" qui suggere un long delai — le conseiller rappelle dans les minutes qui suivent
 - Si le prospect pose une question technique : "Notre conseiller vous repondra lors de l'appel !"
 - Si le prospect semble inquiet ou hesitant : le rassurer en 1 phrase
 - Si le prospect annule ou veut changer le creneau : "Pas de probleme, notre conseiller vous contactera pour convenir d'un nouveau moment."
@@ -120,7 +128,7 @@ Message du prospect: "${messageProspect}"` }]
     return msg;
   } catch(e) {
     console.log('  Erreur generation cloture:', e.message);
-    return urgent ? 'On vous appelle dans les plus brefs delais !' : 'A tres bientot !';
+    return urgent ? 'On vous appelle dans les plus brefs délais !' : 'À très bientôt !';
   }
 }
 
@@ -139,9 +147,10 @@ function ajouterHistorique(historiqueActuel, role, message) {
 }
 
 async function trouverLeadParStatut(telephone, statut) {
+  const telSafe = telephone.replace(/'/g, "\\'");
   return new Promise((resolve, reject) => {
     airtableBase(config.airtable_table).select({
-      filterByFormula: `AND({telephone} = '${telephone}', {statut} = '${statut}')`
+      filterByFormula: `AND({telephone} = '${telSafe}', {statut} = '${statut}')`
     }).firstPage((err, records) => {
       if (err) reject(err);
       else resolve(records.length > 0 ? records[0] : null);
@@ -193,7 +202,7 @@ async function analyserReponse(lead, messageProspect) {
     numero_relance: lead.get('numero_relance') || 0,
     note_initiale: lead.get('note_initiale') || '',
     creneaux_dispo: [],
-    historique: (lead.get('historique_sms') || '').split('\n\n').slice(-6).join('\n\n'),
+    historique: (lead.get('historique_sms') || '').split('\n\n').slice(-10).join('\n\n'),
     message_prospect: messageProspect
   });
 
@@ -211,12 +220,7 @@ async function envoyerEmailAlerte(prenom, telephone, noteIa, urgent, creneau) {
   try {
     const prefixe = urgent ? 'URGENT - ' : '';
     const rdvInfo = creneau ? `\n\nRDV confirme : ${creneau}` : (urgent ? '\n\nRAPPELER DES QUE POSSIBLE' : '');
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: config.gmail_user, pass: config.gmail_app_password },
-      connectionTimeout: 5000, greetingTimeout: 5000, socketTimeout: 5000
-    });
-    await transporter.sendMail({
+    await transporterAlerte.sendMail({
       from: config.gmail_user,
       to: config.alert_email,
       subject: `${prefixe}A APPELER - ${prenom} (${config.nom_cabinet})`,
@@ -249,13 +253,13 @@ function formaterCreneau(creneau) {
 
 function messageCloture(prenom, creneau, urgent) {
   if (urgent) {
-    return `Bien recu ${prenom} ! Un conseiller vous rappelle dans les plus brefs delais.`;
+    return `Bien reçu ${prenom} ! Un conseiller vous rappelle dans les plus brefs délais.`;
   }
   const creneauFormate = formaterCreneau(creneau);
   if (creneauFormate) {
-    return `C'est bien note ${prenom}. Notre conseiller vous rappellera le ${creneauFormate}. A bientot !`;
+    return `C'est bien noté ${prenom}. Notre conseiller vous rappellera le ${creneauFormate}. À bientôt !`;
   }
-  return `C'est bien note ${prenom}. Notre conseiller vous rappellera prochainement. A bientot !`;
+  return `C'est bien noté ${prenom}. Notre conseiller vous rappellera prochainement. À bientôt !`;
 }
 
 // ── TRAITEMENT SMS ENTRANT ────────────────────────────────────────────────────
@@ -263,7 +267,7 @@ function messageCloture(prenom, creneau, urgent) {
 async function traiterSMSEntrant(from, body) {
   console.log(`\nSMS recu de ${from} : "${body.slice(0, 50)}"`);
 
-  const isStop = /^stop[\s\.,!?]*/i.test(body.trim());
+  const isStop = /^stop[\s\.,!?]*$/i.test(body.trim());
 
   try {
     // ── PRIORITE : vérifier d'abord si A APPELER existe ──
@@ -358,8 +362,10 @@ async function traiterSMSEntrant(from, body) {
 
       } else if (decision.decision === 'REPONDRE') {
         if (decision.sms) {
-          historique = ajouterHistorique(historique, 'Wellyo', decision.sms);
-          await sauvegarderHistorique(leadFrais, historique);
+          // Recharger historique depuis leadFrais pour eviter desynchronisation
+          const historiqueAJour = leadFrais.get('historique_sms') || '';
+          const historiqueRepondre = ajouterHistorique(historiqueAJour, 'Wellyo', decision.sms);
+          await sauvegarderHistorique(leadFrais, historiqueRepondre);
           await envoyerSMS(from, decision.sms);
         }
         console.log('  -> REPONDRE, lead reste EN COURS');
